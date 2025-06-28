@@ -1,0 +1,830 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+  <style>
+  body {
+    background: transparent !important;
+  }
+  .text-shadow {
+    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 0 4px #000, 0 0 1px #000, 0 0 12px #000;
+  }
+  .info-icon {
+    width: 30px;
+    text-align: center;
+  }
+  
+  .weather-icon {
+    position: relative;
+    display: inline-block;
+  }
+  
+  .weather-icon-main {
+    color: white;
+    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 0 4px #000, 0 0 1px #000, 0 0 12px #000;
+  }
+  
+  .heat-waves {
+    position: absolute;
+    top: 25px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    animation: heatWave 2s ease-in-out infinite;
+  }
+  
+  .heat-waves.with-wind {
+    left: 1%;
+  }
+  
+  @keyframes heatWave {
+    0%, 100% { transform: translateX(-50%) translateY(0px); opacity: 0.7; }
+    50% { transform: translateX(-50%) translateY(-2px); opacity: 1; }
+  }
+  
+  .wind-waves {
+    position: absolute;
+    top: 25px;
+    left: 97%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    animation: windWave 1.5s ease-in-out infinite;
+  }
+  
+  .wind-waves.only-wind {
+    left: 50%;
+  }
+  
+  @keyframes windWave {
+    0%, 100% { transform: translateX(-50%) translateY(0px); opacity: 0.8; }
+    50% { transform: translateX(-50%) translateY(-2px); opacity: 1; }
+  }
+  
+  .icon-text-shadow {
+    color: white;
+    font-size: 1.3em;
+    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 0 4px #000, 0 0 1px #000, 0 0 12px #000;
+  }
+  
+  .weather-row {
+    margin-top: -4.25px;
+  }
+  </style></head><body class="text-white">
+  
+  <div id="info" class="position-absolute top-0 start-0 m-2 d-flex flex-column gap-1 p-3 rounded">
+    <div class="d-flex align-items-center fs-5 fw-bold text-shadow text-nowrap">
+      <i class="fa-solid fa-location-dot info-icon icon-text-shadow me-2"></i>
+      <span id="place">Waiting…</span>
+    </div>
+    <div class="d-flex align-items-center fs-5 fw-bold text-shadow text-nowrap weather-row">
+      <span class="info-icon me-2">
+        <span id="weather-icon" class="weather-icon">
+          <i id="weather-icon-main" class="fa-solid fa-cloud weather-icon-main"></i>
+          <i id="heat-waves" class="fa-solid fa-water heat-waves" style="display: none;"></i>
+          <i id="wind-waves" class="fa-solid fa-wind wind-waves" style="display: none;"></i>
+        </span>
+      </span>
+      <span id="weather">--°C</span>
+    </div>
+  </div>
+
+  <script>
+  const placeEl = document.getElementById('place');
+  const weatherEl = document.getElementById('weather');
+  const GOOGLE_GEO_KEY = 'YOUR_KEY';
+  
+  let lastKnownLocation = null;
+  let gpsSuccessful = false;
+  let gpsAttempted = false;
+  let consecutiveGPSFailures = 0;
+  let lastWeatherData = null;
+  let lastWeatherTimestamp = 0;
+  
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  
+  async function reverseGeocode(lat, lon){
+    const isLocalFile = window.location.protocol === 'file:';
+    
+    if (isLocalFile) {
+      console.log('Local file detected, using Nominatim as primary geocoder');
+      try {
+        return await reverseGeocodeWithNominatim(lat, lon);
+      } catch (nominatimError) {
+        console.warn('Nominatim failed, trying Google as fallback:', nominatimError);
+        return await reverseGeocodeWithGoogle(lat, lon);
+      }
+    }
+    
+    try {
+      return await reverseGeocodeWithGoogle(lat, lon);
+    } catch (error) {
+      console.warn('Google geocoding failed, falling back to Nominatim:', error.message);
+      return await reverseGeocodeWithNominatim(lat, lon);
+    }
+  }
+  
+  async function reverseGeocodeWithGoogle(lat, lon) {
+    try {
+      const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lon}&key=${GOOGLE_GEO_KEY}&language=en&result_type=locality|administrative_area_level_2|administrative_area_level_1|country`);
+      const data = await res.json();
+      
+      if (data.status === 'OK' && data.results.length > 0) {
+        let allCities = [];
+        let allStates = [];
+        let country = '';
+        let isJapan = false;
+        
+        for (let resultIndex = 0; resultIndex < Math.min(data.results.length, 3); resultIndex++) {
+          const result = data.results[resultIndex];
+          const components = result.address_components;
+        
+        components.forEach(component => {
+          const types = component.types;
+          const name = component.long_name;
+          
+          if (types.includes('country') && (component.short_name === 'JP' || name === 'Japan')) {
+            isJapan = true;
+          }
+          
+            if (types.includes('locality')) {
+              allCities.push({ name, priority: 1, type: 'locality', source: `result_${resultIndex}` });
+            } else if (types.includes('administrative_area_level_2')) {
+              allCities.push({ name, priority: 2, type: 'admin_level_2', source: `result_${resultIndex}` });
+            } else if (types.includes('sublocality_level_1')) {
+              allCities.push({ name, priority: 3, type: 'sublocality', source: `result_${resultIndex}` });
+            }
+            
+            if (types.includes('administrative_area_level_1')) {
+              allStates.push({ name, source: `result_${resultIndex}` });
+            }
+            
+            if (types.includes('country') && !country) {
+            country = name;
+          }
+        });
+        }
+        
+        window.isLocationInJapan = isJapan;
+        
+        const uniqueCities = [];
+        allCities.forEach(cityObj => {
+          const isDuplicate = uniqueCities.some(existing => 
+            existing.name.toLowerCase() === cityObj.name.toLowerCase()
+          );
+          if (!isDuplicate) {
+            uniqueCities.push(cityObj);
+          }
+        });
+        
+        const filteredCities = uniqueCities.filter(cityObj => {
+          const name = cityObj.name;
+          const isDetailedDistrict = name.includes('-dong') || name.includes('dong,') || 
+                                   name.includes('(') || name.includes(')') ||
+                                   name.includes('Ward') || name.includes('District');
+          return !isDetailedDistrict;
+        });
+        
+        const citiesToConsider = filteredCities.length > 0 ? filteredCities : uniqueCities;
+        citiesToConsider.sort((a, b) => a.priority - b.priority);
+          
+        const stateNames = allStates.map(s => s.name);
+        const mostCommonState = stateNames.length > 0 ? stateNames[0] : '';
+          
+        let finalCity = '';
+        let finalState = '';
+        
+        if (citiesToConsider.length > 0) {
+          const bestCityObj = citiesToConsider[0];
+          finalCity = bestCityObj.name;
+          
+          if (mostCommonState) {
+            if (finalCity.toLowerCase() === mostCommonState.toLowerCase()) {
+              finalState = '';
+            }
+            else if (country === 'Israel' && mostCommonState.toLowerCase().includes('district')) {
+              finalState = '';
+            }
+            else {
+              const genericStateTerms = ['region', 'province', 'territory', 'district', 'area'];
+              const isGenericState = genericStateTerms.some(term => 
+                mostCommonState.toLowerCase().includes(term)
+              );
+              
+              if (!isGenericState || bestCityObj.priority > 2) {
+                finalState = mostCommonState;
+          } else {
+                finalState = '';
+              }
+            }
+          }
+        }
+        
+        if (!finalCity && mostCommonState) {
+          finalCity = mostCommonState;
+          finalState = '';
+        }
+        
+        const parts = [finalCity, finalState, country].filter(Boolean);
+        return parts.join(", ");
+      }
+      
+      if (data.status === 'REQUEST_DENIED' || data.status === 'OVER_QUERY_LIMIT') {
+        console.warn('Google Geocoding API access issue:', data.status, data.error_message);
+        throw new Error(`Google API ${data.status}: ${data.error_message || 'Access denied or quota exceeded'}`);
+      }
+      
+      if (data.results && data.results.length > 0) {
+        const formattedAddr = data.results[0].formatted_address;
+        const addressParts = formattedAddr.split(', ');
+        
+        const broadParts = addressParts.slice(-3).filter(part => {
+          return !part.match(/^\d+/) && 
+                 !part.includes('#') && 
+                 !part.includes('Suite') && 
+                 !part.includes('Floor') && 
+                 part.length > 2;
+        });
+        
+        const filteredParts = [];
+        broadParts.forEach((part, index) => {
+          const isRedundant = filteredParts.some(existingPart => {
+            const p1 = part.toLowerCase();
+            const p2 = existingPart.toLowerCase();
+            return p1.includes(p2) || p2.includes(p1) || 
+                   p1.replace(/\s+(region|province|state|prefecture|district)$/, '') === p2 ||
+                   p2.replace(/\s+(region|province|state|prefecture|district)$/, '') === p1;
+          });
+          
+          if (!isRedundant) {
+            filteredParts.push(part);
+          }
+        });
+        
+        return filteredParts.join(", ");
+      }
+      
+      throw new Error('No results from Google Geocoding');
+      
+    } catch (error) {
+      console.warn('Google geocoding failed, falling back to Nominatim:', error);
+      
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=en&addressdetails=1&extratags=1`);
+      const geo = await res.json();
+      const addr = geo.address;
+      
+      window.isLocationInJapan = addr.country_code === 'jp' || addr.country === 'Japan' || addr.country === '日本';
+      
+      let city = '';
+      let state = '';
+      let country = addr.country || '';
+      
+      let potentialCities = [];
+      
+      if (addr.city && !addr.city.includes('Capital') && !addr.city.includes('City of')) {
+        potentialCities.push({ name: addr.city, priority: 1, type: 'city' });
+      }
+      if (addr.town && !addr.town.includes('Capital') && !addr.town.includes('City of')) {
+        potentialCities.push({ name: addr.town, priority: 1, type: 'town' });
+      }
+      if (addr.village && !addr.village.includes('Capital') && !addr.village.includes('City of')) {
+        potentialCities.push({ name: addr.village, priority: 1, type: 'village' });
+      }
+      
+      if (addr.municipality && addr.municipality !== addr.city && addr.municipality !== addr.town) {
+        potentialCities.push({ name: addr.municipality, priority: 2, type: 'municipality' });
+      }
+      if (addr.county && addr.county !== addr.city && addr.county !== addr.town && !addr.county.includes('County')) {
+        potentialCities.push({ name: addr.county, priority: 2, type: 'county' });
+      }
+      
+      if (addr.suburb && addr.suburb !== addr.city && addr.suburb !== addr.town) {
+        potentialCities.push({ name: addr.suburb, priority: 3, type: 'suburb' });
+      }
+      if (addr.neighbourhood && addr.neighbourhood !== addr.city && addr.neighbourhood !== addr.town) {
+        potentialCities.push({ name: addr.neighbourhood, priority: 3, type: 'neighbourhood' });
+      }
+      
+      if (addr.state && addr.state !== addr.city && addr.state !== addr.town) {
+        potentialCities.push({ name: addr.state, priority: 4, type: 'state_as_city' });
+      }
+      
+      const filteredCities = potentialCities.filter(cityObj => {
+        const name = cityObj.name;
+        const isDetailedDistrict = name.includes('-dong') || name.includes('dong,') || 
+                                 name.includes('(') || name.includes(')') ||
+                                 name.includes('Ward') || name.includes('District') ||
+                                 name.includes('Capital') || name.includes('City of') ||
+                                 name.includes('County') || name.includes('Region');
+        return !isDetailedDistrict;
+      });
+      
+      if (filteredCities.length > 0) {
+        filteredCities.sort((a, b) => a.priority - b.priority);
+        const bestCity = filteredCities[0];
+        city = bestCity.name;
+        
+        if (bestCity.type === 'state_as_city') {
+          state = '';
+        } else {
+      if (addr.state && addr.state !== city && !addr.state.includes('Capital') && !addr.state.includes('City of')) {
+            state = addr.state;
+          }
+        }
+      } else if (potentialCities.length > 0) {
+        potentialCities.sort((a, b) => a.priority - b.priority);
+        const bestCity = potentialCities[0];
+        city = bestCity.name.replace(/^Capital City of /, '');
+        
+        if (bestCity.type === 'state_as_city') {
+          state = '';
+        } else if (addr.state && addr.state !== city) {
+          state = addr.state;
+        }
+      }
+      
+      if (city && state) {
+        const cityLower = city.toLowerCase();
+        const stateLower = state.toLowerCase();
+        
+        const isRedundant = cityLower === stateLower ||
+                           cityLower.includes(stateLower) || 
+                           stateLower.includes(cityLower) ||
+                           cityLower === stateLower.replace(/\s+(region|province|state|prefecture|district|county)$/, '') ||
+                           stateLower === cityLower.replace(/\s+(region|province|state|prefecture|district|county)$/, '');
+        
+        if (isRedundant) {
+          if (city.length <= state.length) {
+            state = '';
+        } else {
+            city = state;
+            state = '';
+          }
+        }
+      }
+      
+      const parts = [city, state, country].filter(Boolean);
+      return parts.join(", ");
+    }
+  }
+  
+  const weatherCodes = {
+    0: 'Clear Sky', 1: 'Mostly Clear', 2: 'Few Clouds', 3: 'Cloudy',
+    45: 'Fog', 48: 'Depositing Rime Fog', 51: 'Light Drizzle', 53: 'Moderate Drizzle', 
+    55: 'Dense Drizzle', 56: 'Light Freezing Drizzle', 57: 'Dense Freezing Drizzle',
+    61: 'Light Rain', 63: 'Moderate Rain', 65: 'Heavy Rain', 66: 'Light Freezing Rain', 
+    67: 'Heavy Freezing Rain', 71: 'Light Snow', 73: 'Moderate Snow', 75: 'Heavy Snow',
+    77: 'Snow Grains', 80: 'Light Rain', 81: 'Moderate Rain', 
+    82: 'Heavy Rain', 85: 'Light Snow', 86: 'Snow Showers',
+    95: 'Thunderstorm', 96: 'Thunderstorm with Light Hail', 99: 'Thunderstorm with Heavy Hail'
+  };
+  
+  function getWeatherIcon(weatherCode, isDay = true, temperature = 20) {
+    const iconMap = {
+      0: isDay ? (temperature > 17 ? 'fa-sun' : 'fa-sun') : 'fa-moon',
+      1: isDay ? 'fa-sun' : 'fa-moon',
+      2: isDay ? 'fa-cloud-sun' : 'fa-cloud-moon',
+      3: 'fa-cloud',
+      45: 'fa-eye-slash',
+      48: 'fa-eye-slash',
+      51: 'fa-cloud-rain',
+      53: 'fa-cloud-rain',
+      55: 'fa-cloud-rain',
+      56: 'fa-cloud-rain',
+      57: 'fa-cloud-rain',
+      61: 'fa-cloud-rain',
+      63: 'fa-cloud-rain',
+      65: 'fa-cloud-showers-heavy',
+      66: 'fa-cloud-rain',
+      67: 'fa-cloud-showers-heavy',
+      71: 'fa-snowflake',
+      73: 'fa-snowflake',
+      75: 'fa-snowflake',
+      77: 'fa-snowflake',
+      80: 'fa-cloud-rain',
+      81: 'fa-cloud-rain',
+      82: 'fa-cloud-showers-heavy',
+      85: 'fa-snowflake',
+      86: 'fa-snowflake',
+      95: 'fa-cloud-bolt',
+      96: 'fa-cloud-bolt',
+      99: 'fa-cloud-bolt'
+    };
+    
+    return iconMap[weatherCode] || 'fa-cloud';
+  }
+  
+  function determineHeatWaveThreshold(lat) {
+    const tempThresholds = {
+      arctic: { threshold: 20, region: 'Arctic' },
+      northTemperate: { threshold: 28, region: 'Northern Temperate' },
+      midTemperate: { threshold: 32, region: 'Mid Temperate' },
+      subtropical: { threshold: 35, region: 'Subtropical' },
+      tropical: { threshold: 38, region: 'Tropical' },
+      southTropical: { threshold: 38, region: 'South Tropical' },
+      southSubtropical: { threshold: 35, region: 'South Subtropical' },
+      southTemperate: { threshold: 32, region: 'South Temperate' }
+    };
+    
+    const absLat = Math.abs(lat);
+    
+    if (absLat >= 60) return tempThresholds.arctic;
+    if (absLat >= 45) return lat > 0 ? tempThresholds.northTemperate : tempThresholds.southTemperate;
+    if (absLat >= 30) return tempThresholds.midTemperate;
+    if (absLat >= 15) return lat > 0 ? tempThresholds.subtropical : tempThresholds.southSubtropical;
+    return lat > 0 ? tempThresholds.tropical : tempThresholds.southTropical;
+  }
+  
+  async function fetchWeather(lat, lon){
+    try {
+      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day,wind_speed_10m,precipitation,visibility&timezone=auto`);
+      const j = await r.json();
+      const c = Math.round(j.current.temperature_2m);
+      const f = Math.round(c * 9 / 5 + 32);
+      const isDay = j.current.is_day === 1;
+      
+      const windSpeed = j.current.wind_speed_10m || 0;
+      const precipitation = j.current.precipitation || 0;
+      const visibility = j.current.visibility || 10000;
+      
+      let isWindy = windSpeed > 18;
+      let isVeryWindy = windSpeed > 35;
+      
+      let desc = weatherCodes[j.current.weather_code] || 'Unknown';
+      
+      if (j.current.weather_code === 0 && c > 17 && isDay) {
+        desc = 'Sunny';
+      }
+      
+      const heatThreshold = determineHeatWaveThreshold(lat);
+      const isHot = c >= heatThreshold.threshold;
+      
+      if (isVeryWindy) {
+        desc += ', Very Windy';
+      } else if (isWindy) {
+        desc += ', Windy';
+      }
+      
+      if (isHot) {
+        desc += ', Heat Wave';
+      }
+      
+      lastWeatherData = {
+        temperature: c,
+        fahrenheit: f,
+        description: desc,
+        weatherCode: j.current.weather_code,
+        isDay: isDay,
+        isHot: isHot,
+        isWindy: isWindy,
+        lat: lat,
+        lon: lon
+      };
+      lastWeatherTimestamp = Date.now();
+      
+      weatherEl.textContent = `${c}°C | ${f}°F, ${desc}`;
+      
+      const weatherIconMain = document.getElementById('weather-icon-main');
+      const heatWaves = document.getElementById('heat-waves');
+      const windWaves = document.getElementById('wind-waves');
+      const iconClass = getWeatherIcon(j.current.weather_code, isDay, c);
+      
+      weatherIconMain.className = 'weather-icon-main';
+      weatherIconMain.classList.add('fa-solid', iconClass);
+      
+      if (heatWaves) {
+        if (isHot) {
+          heatWaves.style.display = 'inline-block';
+          if (isWindy) {
+            heatWaves.classList.add('with-wind');
+          } else {
+            heatWaves.classList.remove('with-wind');
+          }
+        } else {
+          heatWaves.style.display = 'none';
+          heatWaves.classList.remove('with-wind');
+        }
+      }
+      
+      if (windWaves) {
+        if (isWindy) {
+          windWaves.style.display = 'inline-block';
+          
+          if (isHot) {
+            windWaves.classList.remove('only-wind');
+            if (heatWaves) {
+              heatWaves.classList.add('with-wind');
+            }
+          } else {
+            windWaves.classList.add('only-wind');
+          }
+        } else {
+          windWaves.style.display = 'none';
+          windWaves.classList.remove('only-wind');
+          
+          if (heatWaves) {
+            heatWaves.classList.remove('with-wind');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Weather fetch failed:', error);
+      
+      if (lastWeatherData && (Date.now() - lastWeatherTimestamp) < 600000) {
+        const cached = lastWeatherData;
+        weatherEl.textContent = `${cached.temperature}°C | ${cached.fahrenheit}°F, ${cached.description}`;
+        
+        const weatherIconMain = document.getElementById('weather-icon-main');
+        const iconClass = getWeatherIcon(cached.weatherCode, cached.isDay, cached.temperature);
+        weatherIconMain.className = 'weather-icon-main';
+        weatherIconMain.classList.add('fa-solid', iconClass);
+        
+        const heatWaves = document.getElementById('heat-waves');
+        const windWaves = document.getElementById('wind-waves');
+        
+        if (heatWaves) {
+          heatWaves.style.display = cached.isHot ? 'inline-block' : 'none';
+          if (cached.isHot && cached.isWindy) {
+            heatWaves.classList.add('with-wind');
+          } else {
+            heatWaves.classList.remove('with-wind');
+          }
+        }
+        
+        if (windWaves) {
+          windWaves.style.display = cached.isWindy ? 'inline-block' : 'none';
+          if (cached.isWindy) {
+            if (cached.isHot) {
+              windWaves.classList.remove('only-wind');
+            } else {
+              windWaves.classList.add('only-wind');
+            }
+          } else {
+            windWaves.classList.remove('only-wind');
+          }
+        }
+      } else {
+      weatherEl.textContent = "Weather N/A";
+      }
+    }
+  }
+  
+  function getIRLProLocation() {
+    if (window.locationData && window.locationData.latitude && window.locationData.longitude) {
+      return {
+        lat: window.locationData.latitude,
+        lon: window.locationData.longitude,
+        source: "IRL Pro GPS"
+      };
+    }
+    return null;
+  }
+  
+  function getBrowserGPS(showLoadingMessages = true) {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('Geolocation not supported'));
+        return;
+      }
+  
+      if (showLoadingMessages) {
+        placeEl.textContent = "Grabbing GPS Location...";
+      }
+      
+      const options = {
+        enableHighAccuracy: true,
+        timeout: isIOS ? 60000 : (isMobile ? 45000 : 15000),
+        maximumAge: gpsSuccessful ? 30000 : 0
+      };
+      
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          gpsSuccessful = true;
+          consecutiveGPSFailures = 0;
+          resolve({
+            lat: position.coords.latitude,
+            lon: position.coords.longitude,
+            accuracy: Math.round(position.coords.accuracy),
+            source: `GPS (±${Math.round(position.coords.accuracy)}m)`
+          });
+        },
+        (error) => {
+          consecutiveGPSFailures++;
+          reject(error);
+        },
+        options
+      );
+    });
+  }
+  
+  async function getLocationFromGoogle(){
+    try {
+      const res = await fetch("https://www.googleapis.com/geolocation/v1/geolocate?key=" + GOOGLE_GEO_KEY, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ considerIp: true })
+      });
+      
+      if (!res.ok) {
+        throw new Error(`Google Geolocation API failed: ${res.status} ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      
+      if (data.error) {
+        throw new Error(`Google Geolocation API error: ${data.error.message}`);
+      }
+      
+      return {
+        lat: data.location.lat,
+        lon: data.location.lng,
+        source: "IP Location (Google)"
+      };
+    } catch (error) {
+      if (!error.message.includes('CORS') && !error.message.includes('403')) {
+        console.warn('Google IP location failed:', error.message);
+      }
+      throw error;
+    }
+  }
+
+  async function getIPLocationFromIpApi() {
+    try {
+      const res = await fetch('https://ip-api.com/json/?fields=status,lat,lon');
+      
+      if (!res.ok) {
+        throw new Error(`IP-API failed: ${res.status} ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      
+      if (data.status !== 'success') {
+        throw new Error('IP-API request failed');
+      }
+      
+      return {
+        lat: data.lat,
+        lon: data.lon,
+        source: "IP Location (IP-API)"
+      };
+    } catch (error) {
+      if (!error.message.includes('CORS') && !error.message.includes('403')) {
+        console.warn('IP-API location failed:', error.message);
+      }
+      throw error;
+    }
+  }
+
+  async function getIPLocationFromIpInfo() {
+    try {
+      const res = await fetch('https://ipinfo.io/json');
+      
+      if (!res.ok) {
+        throw new Error(`IPInfo failed: ${res.status} ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      
+      if (!data.loc) {
+        throw new Error('IPInfo request failed - no location data');
+      }
+      
+      const [lat, lon] = data.loc.split(',').map(Number);
+      return {
+        lat: lat,
+        lon: lon,
+        source: "IP Location (IPInfo)"
+      };
+    } catch (error) {
+      if (!error.message.includes('CORS') && !error.message.includes('403')) {
+        console.warn('IPInfo location failed:', error.message);
+      }
+      throw error;
+    }
+  }
+
+  async function getIPLocationFromIpApi2() {
+    try {
+      const res = await fetch('https://ipapi.co/json/');
+      
+      if (!res.ok) {
+        throw new Error(`IPAPI.co failed: ${res.status} ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      
+      if (data.error) {
+        throw new Error(`IPAPI.co error: ${data.reason}`);
+      }
+      
+      return {
+        lat: data.latitude,
+        lon: data.longitude,
+        source: "IP Location (IPAPI.co)"
+      };
+    } catch (error) {
+      if (!error.message.includes('CORS') && !error.message.includes('403')) {
+        console.warn('IPAPI.co location failed:', error.message);
+      }
+      throw error;
+    }
+  }
+
+  async function getIPLocation() {
+    const services = [
+      getLocationFromGoogle,
+      getIPLocationFromIpApi,
+      getIPLocationFromIpInfo,
+      getIPLocationFromIpApi2
+    ];
+
+    for (const service of services) {
+      try {
+        const result = await service();
+        console.log('IP location success:', result.source);
+        return result;
+      } catch (error) {
+        console.warn('IP location service failed, trying next...', error);
+        continue;
+      }
+    }
+    
+    throw new Error('All IP location services failed');
+  }
+  
+  async function updateLocationAndWeather(showLoadingMessages = true){
+    try {
+      let locationData = null;
+      
+      locationData = getIRLProLocation();
+      
+      if (!locationData) {
+        try {
+          locationData = await getBrowserGPS(showLoadingMessages);
+          gpsAttempted = true;
+        } catch (gpsError) {
+          console.warn('GPS failed:', gpsError);
+          gpsAttempted = true;
+        }
+      }
+      
+      if (!locationData) {
+        if (showLoadingMessages) {
+          placeEl.textContent = "Using IP location...";
+        }
+        try {
+          locationData = await getIPLocation();
+        } catch (ipError) {
+          console.error('All IP location services failed:', ipError);
+        }
+      }
+      
+      if (!locationData && lastKnownLocation) {
+        const now = Date.now();
+        const locationAge = now - (lastKnownLocation.timestamp || 0);
+        
+        if (locationAge < 600000) {
+          locationData = lastKnownLocation;
+          console.log('Using cached location (age:', Math.round(locationAge/60000), 'minutes)');
+        }
+      }
+      
+      if (locationData) {
+        lastKnownLocation = locationData;
+        lastKnownLocation.timestamp = Date.now();
+        if (showLoadingMessages) {
+          placeEl.textContent = "Loading location...";
+        }
+        const label = await reverseGeocode(locationData.lat, locationData.lon);
+        placeEl.textContent = label;
+        fetchWeather(locationData.lat, locationData.lon);
+        console.log('Location updated:', locationData.source, label);
+      } else {
+        if (showLoadingMessages) {
+          console.error('No location data available from any source');
+          placeEl.textContent = "Location N/A";
+          
+          if (!lastWeatherData || (Date.now() - lastWeatherTimestamp) > 600000) {
+          weatherEl.textContent = "Weather N/A";
+        }
+        } else {
+          console.log('Silent location refresh failed, keeping existing display');
+        }
+      }
+      
+    } catch (e) {
+      console.error('Location update failed:', e);
+      if (showLoadingMessages) {
+      placeEl.textContent = "Location N/A";
+        if (!lastWeatherData || (Date.now() - lastWeatherTimestamp) > 600000) {
+      weatherEl.textContent = "Weather N/A";
+        }
+      }
+    }
+  }
+  
+  setInterval(() => updateLocationAndWeather(false), 55000);
+  
+  updateLocationAndWeather(true);
+  </script>
+</body>
+</html> 
