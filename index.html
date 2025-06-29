@@ -492,6 +492,7 @@
         desc += ', Heat Wave';
       }
       
+      // Cache successful weather data
       lastWeatherData = {
         temperature: c,
         fahrenheit: f,
@@ -505,6 +506,7 @@
       };
       lastWeatherTimestamp = Date.now();
       
+      // Set final weather text
       weatherEl.textContent = `${c}°C | ${f}°F, ${desc}`;
       
       const weatherIconMain = document.getElementById('weather-icon-main');
@@ -553,15 +555,28 @@
     } catch (error) {
       console.error('Weather fetch failed:', error);
       
-      if (lastWeatherData && (Date.now() - lastWeatherTimestamp) < 600000) {
+      // Use cached weather data instead of showing "Weather N/A" (persistent like location caching)
+      if (lastWeatherData) {
+        console.log('Using cached weather data due to fetch failure');
         const cached = lastWeatherData;
         weatherEl.textContent = `${cached.temperature}°C | ${cached.fahrenheit}°F, ${cached.description}`;
         
-        const weatherIconMain = document.getElementById('weather-icon-main');
-        const iconClass = getWeatherIcon(cached.weatherCode, cached.isDay, cached.temperature);
-        weatherIconMain.className = 'weather-icon-main';
-        weatherIconMain.classList.add('fa-solid', iconClass);
+        // Update weather icon with cached condition
+        const weatherIcon = document.getElementById('weather-icon');
+        const iconUrls = getGoogleWeatherIcon(cached.weatherCode, cached.isDay, cached.condition);
         
+        // Create new image element for cached data
+        const imgElement = document.createElement('img');
+        imgElement.alt = cached.description;
+        imgElement.style.cssText = 'width: 24px; height: 24px; filter: drop-shadow(-1px -1px 0 #000) drop-shadow(1px -1px 0 #000) drop-shadow(-1px 1px 0 #000) drop-shadow(1px 1px 0 #000) drop-shadow(0 0 4px #000);';
+        imgElement.src = iconUrls.primary;
+        imgElement.onerror = function() { this.src = iconUrls.fallback; };
+        
+        // Update icon
+        weatherIcon.innerHTML = '';
+        weatherIcon.appendChild(imgElement);
+        
+        // Update secondary effects with cached data
         const heatWaves = document.getElementById('heat-waves');
         const windWaves = document.getElementById('wind-waves');
         
@@ -586,8 +601,13 @@
             windWaves.classList.remove('only-wind');
           }
         }
+        
+        // Re-add secondary effects to icon
+        if (heatWaves) weatherIcon.appendChild(heatWaves);
+        if (windWaves) weatherIcon.appendChild(windWaves);
       } else {
-      weatherEl.textContent = "Weather N/A";
+        // Only show "Weather N/A" if no cached data is available at all
+        weatherEl.textContent = "Weather N/A";
       }
     }
   }
@@ -823,24 +843,22 @@
         fetchWeather(locationData.lat, locationData.lon);
         console.log('Location updated:', locationData.source, label);
       } else {
+        console.error('No location data available from any source');
         if (showLoadingMessages) {
-          console.error('No location data available from any source');
           placeEl.textContent = "Location N/A";
           
-          if (!lastWeatherData || (Date.now() - lastWeatherTimestamp) > 600000) {
-          weatherEl.textContent = "Weather N/A";
-        }
-        } else {
-          console.log('Silent location refresh failed, keeping existing display');
+          if (!lastWeatherData) {
+            weatherEl.textContent = "Weather N/A";
+          }
         }
       }
       
     } catch (e) {
       console.error('Location update failed:', e);
       if (showLoadingMessages) {
-      placeEl.textContent = "Location N/A";
-        if (!lastWeatherData || (Date.now() - lastWeatherTimestamp) > 600000) {
-      weatherEl.textContent = "Weather N/A";
+        placeEl.textContent = "Location N/A";
+        if (!lastWeatherData) {
+          weatherEl.textContent = "Weather N/A";
         }
       }
     }
