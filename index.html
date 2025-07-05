@@ -630,19 +630,10 @@
         weatherEl.textContent = `${cached.temperature}°C | ${cached.fahrenheit}°F, ${cached.description}`;
         
         // Update weather icon with cached condition
-        const weatherIcon = document.getElementById('weather-icon');
-        const iconUrls = getGoogleWeatherIcon(cached.weatherCode, cached.isDay, cached.condition);
-        
-        // Create new image element for cached data
-        const imgElement = document.createElement('img');
-        imgElement.alt = cached.description;
-        imgElement.style.cssText = 'width: 24px; height: 24px; filter: drop-shadow(-1px -1px 0 #000) drop-shadow(1px -1px 0 #000) drop-shadow(-1px 1px 0 #000) drop-shadow(1px 1px 0 #000) drop-shadow(0 0 4px #000);';
-        imgElement.src = iconUrls.primary;
-        imgElement.onerror = function() { this.src = iconUrls.fallback; };
-        
-        // Update icon
-        weatherIcon.innerHTML = '';
-        weatherIcon.appendChild(imgElement);
+        const weatherIconMain = document.getElementById('weather-icon-main');
+        const iconClass = getWeatherIcon(cached.weatherCode, cached.isDay, cached.temperature);
+        weatherIconMain.className = 'weather-icon-main';
+        weatherIconMain.classList.add('fa-solid', iconClass);
         
         // Update secondary effects with cached data
         const heatWaves = document.getElementById('heat-waves');
@@ -669,10 +660,6 @@
             windWaves.classList.remove('only-wind');
           }
         }
-        
-        // Re-add secondary effects to icon
-        if (heatWaves) weatherIcon.appendChild(heatWaves);
-        if (windWaves) weatherIcon.appendChild(windWaves);
       } else {
         // Only show "Weather N/A" if no cached data is available at all
         weatherEl.textContent = "Weather N/A";
